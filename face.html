@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Replacement Tool</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .upload-section, .video-section {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        .video-container {
+            position: relative;
+            width: 100%;
+        }
+        
+        #video, #output {
+            width: 100%;
+            border-radius: 4px;
+            background-color: #ddd;
+        }
+        
+        #output {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        
+        .controls {
+            margin: 15px 0;
+            display: flex;
+            gap: 10px;
+        }
+        
+        button {
+            padding: 10px 15px;
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #3367d6;
+        }
+        
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        #status {
+            margin-top: 10px;
+            font-style: italic;
+            color: #666;
+        }
+        
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>Face Replacement Tool</h1>
+    
+    <div class="container">
+        <div class="upload-section">
+            <h2>Step 1: Upload Face Photo</h2>
+            <input type="file" id="photoUpload" accept="image/*">
+            <div id="status">Please upload a face photo to begin</div>
+            <div class="controls">
+                <button id="startCamera" disabled>Start Camera</button>
+                <button id="stopCamera" disabled>Stop Camera</button>
+            </div>
+        </div>
+        
+        <div class="video-section">
+            <h2>Step 2: Live Video with Face Replacement</h2>
+            <div class="video-container">
+                <video id="video" autoplay playsinline></video>
+                <canvas id="output"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load face-api.js from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+    
+    <script>
+        // DOM elements
+        const photoUpload = document.getElementById('photoUpload');
+        const startCameraBtn = document.getElementById('startCamera');
+        const stopCameraBtn = document.getElementById('stopCamera');
+        const statusText = document.getElementById('status');
+        const video = document.getElementById('video');
+        const outputCanvas = document.getElementById('output');
+        const ctx = outputCanvas.getContext('2d');
+        
+        // Variables
+        let faceImage = null;
+        let stream = null;
+        let isProcessing = false;
+        
+        // Initialize face-api.js models
+        async function loadModels() {
+            statusText.textContent = 'Loading face detection models...';
+            
+            // Load models from face-api.js CDN
+            await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/models');
+            await faceapi.nets.faceLandmark68Net.loadFromUri('https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/models');
+            
+            statusText.textContent = 'Models loaded. Please upload a face photo.';
+        }
+        
+        // Handle photo upload
+        photoUpload.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                faceImage = new Image();
+                faceImage.onload = function() {
+                    statusText.textContent = 'Face photo uploaded. Click "Start Camera" to begin.';
+                    startCameraBtn.disabled = false;
+                };
+                faceImage.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+        
+        // Start camera
+        startCameraBtn.addEventListener('click', async function() {
+            try {
+                statusText.textContent = 'Accessing camera...';
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: true 
+                });
+                
+                video.srcObject = stream;
+                startCameraBtn.disabled = true;
+                stopCameraBtn.disabled = false;
+                
+                // Set canvas size to match video
+                video.addEventListener('loadedmetadata', function() {
+                    outputCanvas.width = video.videoWidth;
+                    outputCanvas.height = video.videoHeight;
+                    statusText.textContent = 'Camera active. Processing video...';
+                    processVideo();
+                });
+            } catch (error) {
+                statusText.textContent = 'Error accessing camera: ' + error.message;
+                console.error('Camera error:', error);
+            }
+        });
+        
+        // Stop camera
+        stopCameraBtn.addEventListener('click', function() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            
+            video.srcObject = null;
+            startCameraBtn.disabled = false;
+            stopCameraBtn.disabled = true;
+            isProcessing = false;
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+            statusText.textContent = 'Camera stopped.';
+        });
+        
+        // Process video for face detection and replacement
+        async function processVideo() {
+            if (!stream || isProcessing) return;
+            
+            isProcessing = true;
+            
+            while (stream && video.videoWidth) {
+                // Detect faces in the video
+                const detections = await faceapi
+                    .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+                    .withFaceLandmarks();
+                
+                // Clear canvas
+                ctx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+                
+                if (detections.length > 0 && faceImage) {
+                    // For each detected face, replace with uploaded face
+                    detections.forEach(detection => {
+                        const landmarks = detection.landmarks;
+                        
+                        // Get the bounding box of the face
+                        const box = detection.detection.box;
+                        
+                        // Draw the uploaded face image over the detected face
+                        ctx.drawImage(
+                            faceImage, 
+                            box.x, 
+                            box.y, 
+                            box.width, 
+                            box.height
+                        );
+                    });
+                }
+                
+                // Add a small delay to prevent overloading the browser
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            
+            isProcessing = false;
+        }
+        
+        // Initialize the application
+        window.addEventListener('load', loadModels);
+    </script>
+</body>
+</html>
