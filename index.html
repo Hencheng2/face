@@ -13,15 +13,18 @@
         }
         
         body {
-            background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+            background: linear-gradient(135deg, #1a2a6c, #b21f1f, #fdbb2d);
             color: #fff;
             min-height: 100vh;
             padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
         
         .container {
             max-width: 1200px;
-            margin: 0 auto;
+            width: 100%;
         }
         
         header {
@@ -31,7 +34,7 @@
         }
         
         h1 {
-            font-size: 2.5rem;
+            font-size: 2.8rem;
             margin-bottom: 10px;
             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
         }
@@ -39,6 +42,8 @@
         .subtitle {
             font-size: 1.2rem;
             opacity: 0.9;
+            max-width: 600px;
+            margin: 0 auto;
         }
         
         .main-content {
@@ -46,6 +51,7 @@
             flex-wrap: wrap;
             gap: 30px;
             justify-content: center;
+            margin-bottom: 30px;
         }
         
         .upload-section, .preview-section {
@@ -55,7 +61,7 @@
             padding: 25px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
             flex: 1;
-            min-width: 300px;
+            min-width: 350px;
         }
         
         .section-title {
@@ -79,6 +85,8 @@
             cursor: pointer;
             transition: all 0.3s;
             margin-bottom: 20px;
+            position: relative;
+            overflow: hidden;
         }
         
         .upload-area:hover {
@@ -152,6 +160,7 @@
             width: 100%;
             height: 100%;
             object-fit: cover;
+            transform: scaleX(-1); /* Mirror the video for a more natural feel */
         }
         
         #output {
@@ -166,6 +175,7 @@
             margin-top: 15px;
             background: rgba(0, 0, 0, 0.2);
             border-radius: 8px;
+            font-size: 0.9rem;
         }
         
         .instructions {
@@ -173,19 +183,29 @@
             background: rgba(0, 0, 0, 0.2);
             padding: 20px;
             border-radius: 10px;
+            max-width: 800px;
         }
         
         .instructions h3 {
-            margin-bottom: 10px;
+            margin-bottom: 15px;
+            text-align: center;
         }
         
         .instructions ol {
             padding-left: 20px;
+            margin-bottom: 15px;
         }
         
         .instructions li {
             margin-bottom: 10px;
             line-height: 1.5;
+        }
+        
+        .tips {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
         }
         
         footer {
@@ -195,9 +215,27 @@
             font-size: 0.9rem;
         }
         
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
         @media (max-width: 768px) {
             .main-content {
                 flex-direction: column;
+            }
+            
+            h1 {
+                font-size: 2.2rem;
             }
         }
     </style>
@@ -206,7 +244,7 @@
     <div class="container">
         <header>
             <h1>Face Replacement Tool</h1>
-            <p class="subtitle">Upload a photo and replace faces in your live video</p>
+            <p class="subtitle">Upload a photo and replace faces in your live video in real-time</p>
         </header>
         
         <div class="main-content">
@@ -283,16 +321,31 @@
                 <li>Upload a clear frontal face photo using the upload area</li>
                 <li>Click "Start Camera" and allow camera access when prompted</li>
                 <li>Position your face in the camera view - the tool will automatically detect and replace it</li>
-                <li>Use "Take Snapshot" to capture the result (note: this demo shows the concept)</li>
+                <li>Use "Take Snapshot" to capture the result</li>
                 <li>Click "Stop Camera" when finished</li>
             </ol>
-            <p><strong>Note:</strong> This demo shows the UI concept. A full implementation would require more advanced face detection libraries or backend processing.</p>
+            
+            <div class="tips">
+                <p><strong>Tips for best results:</strong></p>
+                <ul>
+                    <li>Use good lighting on your face</li>
+                    <li>Look directly at the camera</li>
+                    <li>Use a high-quality, clear photo for replacement</li>
+                    <li>Avoid moving too quickly for better tracking</li>
+                </ul>
+            </div>
         </div>
         
         <footer>
-            <p>Created as a demonstration of face replacement technology | Not for production use</p>
+            <p>Face Replacement Tool using TensorFlow.js FaceMesh | Created with HTML, CSS & JavaScript</p>
         </footer>
     </div>
+
+    <!-- Load TensorFlow.js and FaceMesh model -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection"></script>
 
     <script>
         // DOM elements
@@ -312,6 +365,8 @@
         let faceImage = null;
         let stream = null;
         let isProcessing = false;
+        let faceMesh = null;
+        let model = null;
         
         // Event Listeners
         uploadArea.addEventListener('click', () => {
@@ -347,6 +402,32 @@
         stopCameraBtn.addEventListener('click', stopCamera);
         takeSnapshotBtn.addEventListener('click', takeSnapshot);
         
+        // Initialize FaceMesh model
+        async function setupFaceMesh() {
+            statusText.innerHTML = '<span class="loading"></span> Loading face detection model...';
+            
+            // Set backend to WebGL for better performance
+            await tf.setBackend('webgl');
+            
+            // Load FaceMesh model
+            model = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
+            const detectorConfig = {
+                runtime: 'tfjs',
+                refineLandmarks: true,
+                maxFaces: 1
+            };
+            
+            try {
+                faceMesh = await faceLandmarksDetection.createDetector(model, detectorConfig);
+                statusText.textContent = 'Model loaded. Please upload a face photo.';
+                return true;
+            } catch (error) {
+                console.error('Error loading FaceMesh model:', error);
+                statusText.textContent = 'Error loading face detection model. Please refresh and try again.';
+                return false;
+            }
+        }
+        
         // Functions
         function handleImageUpload(file) {
             if (!file.type.match('image.*')) {
@@ -362,7 +443,7 @@
                     imagePreview.innerHTML = `
                         <div style="text-align: center; margin-top: 15px;">
                             <p>Uploaded Image:</p>
-                            <img src="${e.target.result}" style="max-width: 150px; max-height: 150px; border-radius: 8px; margin-top: 10px;">
+                            <img src="${e.target.result}" style="max-width: 150px; max-height: 150px; border-radius: 8px; margin-top: 10px; border: 2px solid #fff;">
                         </div>
                     `;
                     
@@ -375,6 +456,11 @@
         }
         
         async function startCamera() {
+            if (!faceMesh) {
+                const modelLoaded = await setupFaceMesh();
+                if (!modelLoaded) return;
+            }
+            
             try {
                 statusText.textContent = 'Accessing camera...';
                 stream = await navigator.mediaDevices.getUserMedia({ 
@@ -390,12 +476,12 @@
                 video.addEventListener('loadedmetadata', function() {
                     outputCanvas.width = video.videoWidth;
                     outputCanvas.height = video.videoHeight;
-                    statusText.textContent = 'Camera active. Processing video...';
+                    statusText.textContent = 'Camera active. Detecting faces...';
                     cameraStatus.textContent = 'Active';
                     cameraStatus.style.color = '#7cff7c';
                     
-                    // Start the face detection simulation
-                    simulateFaceDetection();
+                    // Start the face detection
+                    detectFaces();
                 });
             } catch (error) {
                 statusText.textContent = 'Error accessing camera: ' + error.message;
@@ -442,67 +528,98 @@
             link.click();
             
             statusText.textContent = 'Snapshot downloaded!';
+            setTimeout(() => {
+                if (stream) statusText.textContent = 'Camera active. Detecting faces...';
+            }, 2000);
         }
         
-        // This function simulates face detection and replacement
-        // In a real application, this would use a face detection library
-        function simulateFaceDetection() {
+        // Face detection and replacement function
+        async function detectFaces() {
             if (!stream || isProcessing) return;
             
             isProcessing = true;
-            const previewFrame = () => {
+            
+            const detect = async () => {
                 if (!stream) {
                     isProcessing = false;
                     return;
                 }
                 
                 // Draw the video frame
-                ctx.drawImage(video, 0, 0, outputCanvas.width, outputCanvas.height);
+                ctx.save();
+                ctx.scale(-1, 1);
+                ctx.drawImage(video, -outputCanvas.width, 0, outputCanvas.width, outputCanvas.height);
+                ctx.restore();
                 
-                // Simulate face detection by drawing a circle in the middle
-                // In a real app, this would use actual face detection coordinates
-                const centerX = outputCanvas.width / 2;
-                const centerY = outputCanvas.height / 2;
-                const radius = 100;
-                
-                // Draw the uploaded face image over the "detected face"
-                if (faceImage) {
-                    // Save the context state
-                    ctx.save();
-                    
-                    // Create a circular clipping path
-                    ctx.beginPath();
-                    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-                    ctx.closePath();
-                    ctx.clip();
-                    
-                    // Draw the face image within the clipping path
-                    ctx.drawImage(
-                        faceImage, 
-                        centerX - radius, 
-                        centerY - radius, 
-                        radius * 2, 
-                        radius * 2
-                    );
-                    
-                    // Restore the context state
-                    ctx.restore();
-                    
-                    // Draw a border around the replaced face
-                    ctx.beginPath();
-                    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-                    ctx.strokeStyle = '#ff9966';
-                    ctx.lineWidth = 3;
-                    ctx.stroke();
+                if (faceImage && faceMesh) {
+                    try {
+                        // Estimate faces
+                        const faces = await faceMesh.estimateFaces(video, { flipHorizontal: false });
+                        
+                        if (faces.length > 0) {
+                            const face = faces[0];
+                            
+                            // Get the bounding box of the face
+                            const box = face.box;
+                            
+                            // Draw the uploaded face image over the detected face
+                            ctx.save();
+                            ctx.scale(-1, 1);
+                            
+                            // Create a clipping path for the face
+                            ctx.beginPath();
+                            ctx.arc(
+                                - (box.xMin + box.width/2), 
+                                box.yMin + box.height/2, 
+                                Math.min(box.width, box.height)/2, 
+                                0, 
+                                Math.PI * 2
+                            );
+                            ctx.closePath();
+                            ctx.clip();
+                            
+                            // Draw the face image
+                            ctx.drawImage(
+                                faceImage, 
+                                - (box.xMin + box.width/2 + box.width/2), 
+                                box.yMin, 
+                                box.width, 
+                                box.height
+                            );
+                            
+                            ctx.restore();
+                            
+                            // Draw a border around the replaced face
+                            ctx.beginPath();
+                            ctx.arc(
+                                outputCanvas.width - (box.xMin + box.width/2),
+                                box.yMin + box.height/2,
+                                Math.min(box.width, box.height)/2,
+                                0,
+                                Math.PI * 2
+                            );
+                            ctx.strokeStyle = '#ff9966';
+                            ctx.lineWidth = 2;
+                            ctx.stroke();
+                        }
+                    } catch (error) {
+                        console.error('Error detecting faces:', error);
+                    }
                 }
                 
-                // Continue the animation
-                requestAnimationFrame(previewFrame);
+                // Continue detection
+                requestAnimationFrame(detect);
             };
             
-            // Start the simulation
-            previewFrame();
+            // Start detection
+            detect();
         }
+        
+        // Initialize the application
+        window.addEventListener('load', () => {
+            statusText.textContent = 'Initializing...';
+            setTimeout(setupFaceMesh, 500);
+        });
     </script>
 </body>
 </html>
